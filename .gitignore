@@ -2,3 +2,8 @@
 __pycache__/
 captures/
 camera-test.jpg
+.venv-cat/
+cat-results/
+garden-images/
+*.pt
+*_ncnn_model/

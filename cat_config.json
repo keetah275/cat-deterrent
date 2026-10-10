@@ -1,0 +1,6 @@
+{
+  "model": "yolo26n.pt",
+  "confidence": 0.5,
+  "image_size": 640,
+  "output_dir": "cat-results"
+}

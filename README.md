@@ -1,5 +1,7 @@
 # Garden motion-detection prototype
 
+For the saved-image YOLO cat detector, see [cat detection setup and testing](CAT_DETECTION.md).
+
 Detection-only Python prototype for a Raspberry Pi 5 and Camera Module 3 NoIR Wide, using Picamera2 and OpenCV. It continuously captures 640 × 360 frames, converts them to greyscale, applies a Gaussian blur, and compares each frame with the previous one. Thresholding, dilation, and a minimum contour area filter identify moving regions.
 
 Significant motion prints a local timestamp and saves a JPEG with green bounding boxes. A cooldown limits both messages and saved images; detection continues during that cooldown. There is no GPIO, relay, or pump control, and no animal classification yet. See [the project plan](PROJECT_PLAN.md).
@@ -126,6 +128,23 @@ image produces no motion capture. Non-Pi sources are resized to 640 × 360;
 different aspect ratios are stretched in this prototype.
 
 ## Planned cat recognition
+
+### Tapo C325WB setup
+
+In the Tapo app, open the camera settings, then **Advanced Settings → Camera
+Account**. Create a dedicated camera username and password; these are separate
+from your Tapo login. Find the camera IP under **Device Settings → Device Info**,
+and ensure the Pi is on the same local network.
+
+Use `rtsp://USERNAME:PASSWORD@CAMERA_IP:554/stream2` for the lower-quality stream,
+or `/stream1` for high quality. Start with `/stream2` for motion testing. Enter it
+at the hidden URL prompt described above, then run with `--source rtsp`.
+See [TP-Link's setup guide](https://www.tp-link.com/uk/support/faq/2680/).
+
+The C325WB V2 supports PoE; confirm the hardware version on the camera label when
+checking power requirements. See [TP-Link's V2 product information](https://www.tp-link.com/us/home-networking/cloud-camera/tapo-c325wb/).
+
+## Animal classification stage
 
 The next processing stage will accept an image from any source and return animal
 labels, confidence scores, and bounding boxes using a trained object-detection

@@ -10,9 +10,13 @@ This document records the project context for future development and assistant s
 
 Camera input must remain independent of image processing. The prototype supports
 the Pi camera, an outdoor camera's RTSP stream, and saved JPEG/PNG images through
-a shared frame-source interface. The outdoor IP camera supports RTSP; its exact
-model and stream URL are still to be confirmed. Current processing detects motion,
-not cats. A later animal detector must also accept single images and report labels,
+a shared frame-source interface. The outdoor IP camera is a Tapo C325WB, purchased
+as the PoE version. It supports RTSP; its local IP address and camera account are
+still to be configured. Current processing detects motion,
+not cats. A separate saved-image YOLO detector now accepts original-resolution
+images and records labels, confidence scores, and boxes; model accuracy still
+needs validation on garden images. Live animal detection is not integrated yet.
+A live animal detector must also accept single images and report labels,
 confidence scores, and bounding boxes without requiring motion first.
 
 The immediate goal is to test detection of objects in the garden using the Raspberry Pi as the brains of the system.
