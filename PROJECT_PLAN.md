@@ -8,6 +8,13 @@ This document records the project context for future development and assistant s
 
 ## Current focus: object detection
 
+Camera input must remain independent of image processing. The prototype supports
+the Pi camera, an outdoor camera's RTSP stream, and saved JPEG/PNG images through
+a shared frame-source interface. The outdoor IP camera supports RTSP; its exact
+model and stream URL are still to be confirmed. Current processing detects motion,
+not cats. A later animal detector must also accept single images and report labels,
+confidence scores, and bounding boxes without requiring motion first.
+
 The immediate goal is to test detection of objects in the garden using the Raspberry Pi as the brains of the system.
 
 - Establish an image capture and object detection workflow.

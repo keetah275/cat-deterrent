@@ -45,8 +45,9 @@ Allow three seconds for the camera to settle, then move through its view. JPEGs 
 
 Edit `config.json` beside the script to change the defaults. Restart the detector
 after editing; settings are loaded once at startup. No additional packages are needed.
-JSON uses the names `min_area`, `cooldown`, `fps`, `threshold`, `warmup`, and
-`output_dir`. Output paths are relative to your terminal's working directory.
+JSON uses the names `min_area`, `cooldown`, `fps`, `threshold`, `warmup`,
+`output_dir`, `source`, and `input_path`. Output and image input paths are relative
+to your terminal's working directory.
 
 To compare experiments, copy `config.json` to another file, adjust its values,
 and select it explicitly:
@@ -79,6 +80,59 @@ python motion_detector.py --min-area 1000 --cooldown 15 --fps 8 --threshold 30 -
 | `--output-dir` | `captures` | Destination folder, created automatically. |
 
 Run `python motion_detector.py --help` for the available settings.
+
+## Other cameras and saved images
+
+Capture is separated into `frame_sources.py`. Every source supplies BGR images at
+640 × 360 to the same motion detector. Picamera2 is imported only when using the Pi
+camera; RTSP and saved images need OpenCV but do not need Pi camera hardware.
+
+For your outdoor RTSP camera, set `"source": "rtsp"` in a copy of the config,
+or use the command-line option below. Obtain the exact RTSP path from the camera
+manufacturer; paths differ between models. Supply the URL through an environment
+variable, so it is not written into config files or capture metadata:
+
+```bash
+read -r -s -p "Camera RTSP URL: " CAT_CAMERA_RTSP_URL
+echo
+export CAT_CAMERA_RTSP_URL
+python motion_detector.py --source rtsp
+```
+
+Enter the full URL, typically `rtsp://USERNAME:PASSWORD@CAMERA_IP:554/STREAM_PATH`.
+Special characters in credentials may need URL encoding. The prompt hides input
+and avoids putting the URL in shell history. OpenCV/FFmpeg diagnostics can still
+include connection details: redact credentials before sharing error output.
+
+Use a low-resolution camera substream close to 640 × 360 and configure its frame
+rate near the detector's FPS. Resizing reduces processing size but does not reduce
+network traffic or decoding cost. A faster stream can also accumulate latency;
+this prototype does not yet discard buffered frames or reconnect automatically.
+Connection and read timeouts are five seconds, using OpenCV's FFmpeg backend
+([OpenCV video I/O documentation](https://docs.opencv.org/4.10.0/d4/d15/group__videoio__flags__base.html)).
+If the stream fails, the program exits and releases it; restart after fixing the
+connection. Your OpenCV installation must include FFmpeg with RTSP support.
+
+You can also replay a directory of JPEG/PNG images in filename order:
+
+```bash
+python motion_detector.py --source images --input-path garden-images --warmup 0 --cooldown 0
+```
+
+The directory is processed once, then the program exits. Images should form a
+sequence from a fixed view for meaningful motion testing. A single image is
+accepted as input, but frame differencing needs at least two frames, so a single
+image produces no motion capture. Non-Pi sources are resized to 640 × 360;
+different aspect ratios are stretched in this prototype.
+
+## Planned cat recognition
+
+The next processing stage will accept an image from any source and return animal
+labels, confidence scores, and bounding boxes using a trained object-detection
+model. This stage should also support individual images independently of motion,
+so it can recognise a stationary cat. Motion can later serve as an optional way
+to reduce how often the model runs. No cat-recognition model is implemented yet;
+current captures record motion only and must not be treated as cat detections.
 
 ## Testing and limitations
 

@@ -1,4 +1,6 @@
 {
+  "source": "picamera2",
+  "input_path": "images",
   "min_area": 600,
   "cooldown": 10,
   "fps": 10,

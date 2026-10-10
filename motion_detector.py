@@ -13,16 +13,19 @@ def parse_args():
     parser.add_argument("--config", type=Path,
                         default=Path(__file__).with_name("config.json"),
                         help="JSON settings file (default: config.json beside script)")
-    config_args, _ = parser.parse_known_args()
+    config_parser = argparse.ArgumentParser(add_help=False)
+    config_parser.add_argument("--config", type=Path,
+                               default=Path(__file__).with_name("config.json"))
+    config_args, _ = config_parser.parse_known_args()
     try:
         settings = json.loads(config_args.config.read_text())
     except (OSError, ValueError) as error:
         parser.error(f"cannot load config {config_args.config}: {error}")
-    allowed = {"min_area", "cooldown", "fps", "threshold", "warmup", "output_dir"}
+    allowed = {"min_area", "cooldown", "fps", "threshold", "warmup", "output_dir", "source", "input_path"}
     if not isinstance(settings, dict) or settings.keys() - allowed:
         parser.error("config must be an object containing only: " + ", ".join(sorted(allowed)))
     for key, value in settings.items():
-        if key == "output_dir":
+        if key in {"output_dir", "source", "input_path"}:
             valid = isinstance(value, str) and bool(value.strip())
         elif key == "threshold":
             valid = type(value) is int
@@ -41,8 +44,14 @@ def parse_args():
     parser.add_argument("--warmup", type=float, default=3,
                         help="camera settling time in seconds (default: 3)")
     parser.add_argument("--output-dir", type=Path, default=Path("captures"))
+    parser.add_argument("--source", choices=("picamera2", "rtsp", "images"),
+                        default="picamera2", help="frame source (default: picamera2)")
+    parser.add_argument("--input-path", type=Path, default=Path("images"),
+                        help="image file or directory for the images source")
     parser.set_defaults(**settings)
     args = parser.parse_args()
+    if args.source not in {"picamera2", "rtsp", "images"}:
+        parser.error("source must be picamera2, rtsp, or images")
     import math
     if not all(math.isfinite(value) for value in
                (args.min_area, args.cooldown, args.fps, args.warmup)):
@@ -85,19 +94,13 @@ def main():
     args = parse_args()
     # Delayed imports allow --help to work even away from the Raspberry Pi.
     import cv2
-    from picamera2 import Picamera2
+    from frame_sources import open_source
 
     cv2.setNumThreads(1)
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    camera = Picamera2()
+    camera = None
     try:
-        # Picamera2 RGB888 yields BGR bytes, matching OpenCV's colour order.
-        config = camera.create_video_configuration(
-            main={"size": (640, 360), "format": "RGB888"},
-            controls={"FrameRate": args.fps}, buffer_count=4,
-        )
-        camera.configure(config)
-        camera.start()
+        camera = open_source(cv2, args)
         print(f"Camera warming up for {args.warmup:g}s...", flush=True)
         time.sleep(args.warmup)
         previous = None
@@ -106,7 +109,10 @@ def main():
         print("Watching for motion at 640 × 360. Press Ctrl+C to stop.", flush=True)
         while True:
             loop_start = time.monotonic()
-            frame = camera.capture_array("main")
+            frame = camera.read()
+            if frame is None:
+                print("End of image input.", flush=True)
+                break
             grey = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             blurred = cv2.GaussianBlur(grey, (21, 21), 0)
             boxes = [] if previous is None else moving_regions(
@@ -132,8 +138,11 @@ def main():
             time.sleep(max(0, interval - (time.monotonic() - loop_start)))
     except KeyboardInterrupt:
         print("\nStopping motion detection.", flush=True)
+    except (OSError, ValueError, RuntimeError) as error:
+        raise SystemExit(f"Detection stopped: {error}") from None
     finally:
-        camera.close()
+        if camera is not None:
+            camera.close()
 
 
 if __name__ == "__main__":
