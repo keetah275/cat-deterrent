@@ -1,0 +1,8 @@
+{
+  "min_area": 600,
+  "cooldown": 10,
+  "fps": 10,
+  "threshold": 25,
+  "warmup": 3,
+  "output_dir": "captures"
+}

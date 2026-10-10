@@ -41,7 +41,29 @@ python motion_detector.py
 
 Allow three seconds for the camera to settle, then move through its view. JPEGs are saved in `captures/`, relative to your working directory. Press **Ctrl+C** to stop and release the camera. No display is required, so this also works over SSH.
 
-Example with custom settings:
+## Configuration and capture records
+
+Edit `config.json` beside the script to change the defaults. Restart the detector
+after editing; settings are loaded once at startup. No additional packages are needed.
+JSON uses the names `min_area`, `cooldown`, `fps`, `threshold`, `warmup`, and
+`output_dir`. Output paths are relative to your terminal's working directory.
+
+To compare experiments, copy `config.json` to another file, adjust its values,
+and select it explicitly:
+
+```bash
+cp config.json garden-test.json
+python motion_detector.py --config garden-test.json
+```
+
+Each JPEG gets a matching JSON record, for example `motion_20261010_170000_123456.jpg`
+and `motion_20261010_170000_123456.json`. The record contains the timestamp,
+effective settings, fixed processing parameters, and bounding boxes. This records
+the settings actually used even if you later edit the original config file.
+
+Command-line options override values from the selected config file. Missing keys
+use the built-in defaults; invalid values or unknown keys produce an error before
+the camera starts. For example:
 
 ```bash
 python motion_detector.py --min-area 1000 --cooldown 15 --fps 8 --threshold 30 --output-dir captures

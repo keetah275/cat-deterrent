@@ -2,6 +2,7 @@
 """Headless garden motion detection; no animal classification or actuator control."""
 
 import argparse
+import json
 from datetime import datetime
 from pathlib import Path
 import time
@@ -9,6 +10,26 @@ import time
 
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--config", type=Path,
+                        default=Path(__file__).with_name("config.json"),
+                        help="JSON settings file (default: config.json beside script)")
+    config_args, _ = parser.parse_known_args()
+    try:
+        settings = json.loads(config_args.config.read_text())
+    except (OSError, ValueError) as error:
+        parser.error(f"cannot load config {config_args.config}: {error}")
+    allowed = {"min_area", "cooldown", "fps", "threshold", "warmup", "output_dir"}
+    if not isinstance(settings, dict) or settings.keys() - allowed:
+        parser.error("config must be an object containing only: " + ", ".join(sorted(allowed)))
+    for key, value in settings.items():
+        if key == "output_dir":
+            valid = isinstance(value, str) and bool(value.strip())
+        elif key == "threshold":
+            valid = type(value) is int
+        else:
+            valid = type(value) in (int, float)
+        if not valid:
+            parser.error(f"invalid config value for {key}")
     parser.add_argument("--min-area", type=float, default=600,
                         help="minimum contour area in pixels (default: 600)")
     parser.add_argument("--cooldown", type=float, default=10,
@@ -20,6 +41,7 @@ def parse_args():
     parser.add_argument("--warmup", type=float, default=3,
                         help="camera settling time in seconds (default: 3)")
     parser.add_argument("--output-dir", type=Path, default=Path("captures"))
+    parser.set_defaults(**settings)
     args = parser.parse_args()
     import math
     if not all(math.isfinite(value) for value in
@@ -30,6 +52,23 @@ def parse_args():
     if not 1 <= args.fps <= 30 or not 1 <= args.threshold <= 255:
         parser.error("fps must be 1–30 and threshold must be 1–255")
     return args
+
+
+def save_capture_metadata(filename, args, timestamp, boxes):
+    """Save effective settings, including CLI overrides, beside the JPEG."""
+    metadata = {
+        "timestamp": timestamp.isoformat(),
+        "image": filename.name,
+        "config_file": str(args.config.resolve()),
+        "settings": {key: str(value) if isinstance(value, Path) else value
+                     for key, value in vars(args).items() if key != "config"},
+        "processing": {"resolution": [640, 360], "method": "frame_differencing",
+                       "gaussian_blur_kernel": [21, 21], "dilation_iterations": 2,
+                       "jpeg_quality": 90},
+        "bounding_boxes": [dict(zip(("x", "y", "width", "height"), box))
+                           for box in boxes],
+    }
+    filename.with_suffix(".json").write_text(json.dumps(metadata, indent=2) + "\n")
 
 
 def moving_regions(cv2, previous, current, threshold, min_area):
@@ -86,6 +125,7 @@ def main():
                 if not cv2.imwrite(str(filename), frame,
                                    [cv2.IMWRITE_JPEG_QUALITY, 90]):
                     raise OSError(f"Could not save image: {filename}")
+                save_capture_metadata(filename, args, timestamp, boxes)
                 last_saved = time.monotonic()
                 print(f"Saved {filename}", flush=True)
             # Continue updating the previous frame throughout the cooldown.
