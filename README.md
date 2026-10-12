@@ -83,6 +83,26 @@ python motion_detector.py --min-area 1000 --cooldown 15 --fps 8 --threshold 30 -
 
 Run `python motion_detector.py --help` for the available settings.
 
+### Ignore motion around the frame edges
+
+Set `"ignore_border": 30` in your motion config to exclude the outer 30 pixels
+on all four sides. At 640 × 360, this leaves a central 580 × 300 detection zone.
+The supplied config uses 30; older configs without this key retain full-frame
+detection. Use 0 to disable exclusion, or increase it to ignore a wider border
+(allowed range: 0–179 pixels).
+
+```bash
+python motion_detector.py --ignore-border 30
+```
+
+Restart after changing the config. Only motion inside the central zone counts
+towards the minimum contour area. Motion entirely outside it cannot trigger a
+capture; objects crossing into it can. The zone is cropped before Gaussian blur
+to prevent edge movement leaking into detection. Saved JPEGs still show the full
+frame, with motion boxes at the correct positions. Each capture's JSON settings
+include `ignore_border`. This option applies to motion detection, not the separate
+YOLO cat detector.
+
 ## Other cameras and saved images
 
 Capture is separated into `frame_sources.py`. Every source supplies BGR images at

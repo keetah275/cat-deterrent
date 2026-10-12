@@ -21,13 +21,13 @@ def parse_args():
         settings = json.loads(config_args.config.read_text())
     except (OSError, ValueError) as error:
         parser.error(f"cannot load config {config_args.config}: {error}")
-    allowed = {"min_area", "cooldown", "fps", "threshold", "warmup", "output_dir", "source", "input_path"}
+    allowed = {"min_area", "cooldown", "fps", "threshold", "warmup", "output_dir", "source", "input_path", "ignore_border"}
     if not isinstance(settings, dict) or settings.keys() - allowed:
         parser.error("config must be an object containing only: " + ", ".join(sorted(allowed)))
     for key, value in settings.items():
         if key in {"output_dir", "source", "input_path"}:
             valid = isinstance(value, str) and bool(value.strip())
-        elif key == "threshold":
+        elif key in {"threshold", "ignore_border"}:
             valid = type(value) is int
         else:
             valid = type(value) in (int, float)
@@ -41,6 +41,8 @@ def parse_args():
                         help="capture/processing rate, 1–30 (default: 10)")
     parser.add_argument("--threshold", type=int, default=25,
                         help="greyscale difference threshold, 1–255 (default: 25)")
+    parser.add_argument("--ignore-border", type=int, default=0,
+                        help="ignore this many pixels on every edge, 0–179 (default: 0)")
     parser.add_argument("--warmup", type=float, default=3,
                         help="camera settling time in seconds (default: 3)")
     parser.add_argument("--output-dir", type=Path, default=Path("captures"))
@@ -60,6 +62,8 @@ def parse_args():
         parser.error("min-area must be positive; cooldown and warmup cannot be negative")
     if not 1 <= args.fps <= 30 or not 1 <= args.threshold <= 255:
         parser.error("fps must be 1–30 and threshold must be 1–255")
+    if not 0 <= args.ignore_border < 180:
+        parser.error("ignore-border must be between 0 and 179 pixels")
     return args
 
 
@@ -113,10 +117,15 @@ def main():
             if frame is None:
                 print("End of image input.", flush=True)
                 break
-            grey = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            border = args.ignore_border
+            # Crop before blurring so excluded motion cannot bleed into the zone.
+            height, width = frame.shape[:2]
+            zone = frame[border:height - border, border:width - border]
+            grey = cv2.cvtColor(zone, cv2.COLOR_BGR2GRAY)
             blurred = cv2.GaussianBlur(grey, (21, 21), 0)
             boxes = [] if previous is None else moving_regions(
                 cv2, previous, blurred, args.threshold, args.min_area)
+            boxes = [(x + border, y + border, w, h) for x, y, w, h in boxes]
             previous = blurred
             now = time.monotonic()
             if boxes and now - last_saved >= args.cooldown:
