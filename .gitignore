@@ -1,9 +1,13 @@
 .venv/
 __pycache__/
 captures/
+captures-tc41/
 camera-test.jpg
 .venv-cat/
 cat-results/
 garden-images/
 *.pt
 *_ncnn_model/
+decisions-results/
+.env
+garden-comparison/
