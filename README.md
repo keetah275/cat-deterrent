@@ -105,6 +105,30 @@ YOLO cat detector.
 
 ## Other cameras and saved images
 
+### TC41 patio detection zone
+
+`config-tc41.json` is an optional setup for the camera position from 17 November.
+It watches a polygon on the open paving, excluding most planting and furniture.
+It is not used until selected explicitly. Recheck the zone whenever the camera moves.
+
+```bash
+python preview_detection_zone.py captures-tc41/YOUR_IMAGE.jpg
+python motion_detector.py --config config-tc41.json
+```
+
+The preview is saved as `captures-tc41/detection-zone-preview.jpg`: the yellow
+outline bounds the active area; dark areas are ignored. Do not use the preview
+as a recognition test image. The detector still saves full-frame captures.
+`detection_polygon` is a list of at least three `[x, y]` integer vertices around
+the boundary in order, on the 640 × 360 processed image (top left is `[0, 0]`).
+Use a simple polygon whose edges do not cross. An empty list disables the polygon.
+The active area is the intersection of that polygon and `ignore_border`.
+Movement is excluded before blur and masked again after dilation. Capture JSON
+records the polygon alongside other settings. Motion outside the zone cannot
+start a capture, including cats that stay outside it. Shadows moving inside the
+zone can still trigger. Restart after changing settings. The RTSP URL must still
+be exported as `CAT_CAMERA_RTSP_URL` in the terminal running the detector.
+
 Capture is separated into `frame_sources.py`. Every source supplies BGR images at
 640 × 360 to the same motion detector. Picamera2 is imported only when using the Pi
 camera; RTSP and saved images need OpenCV but do not need Pi camera hardware.
