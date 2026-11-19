@@ -152,12 +152,32 @@ include connection details: redact credentials before sharing error output.
 
 Use a low-resolution camera substream close to 640 × 360 and configure its frame
 rate near the detector's FPS. Resizing reduces processing size but does not reduce
-network traffic or decoding cost. A faster stream can also accumulate latency;
-this prototype does not yet discard buffered frames or reconnect automatically.
+network traffic or decoding cost. RTSP now decodes continuously in a background
+thread, keeping only the latest frame for processing. Older unprocessed frames
+are replaced instead of queued. Detection still runs at the configured FPS and
+waits for a fresh frame if the camera is slower. This prevents processing pauses
+from building an application frame queue; it does not guarantee that camera,
+network, or decoder buffering cannot introduce latency or decoding warnings.
+Automatic reconnection is not implemented.
 Connection and read timeouts are five seconds, using OpenCV's FFmpeg backend
 ([OpenCV video I/O documentation](https://docs.opencv.org/4.10.0/d4/d15/group__videoio__flags__base.html)).
 If the stream fails, the program exits and releases it; restart after fixing the
 connection. Your OpenCV installation must include FFmpeg with RTSP support.
+Ctrl+C may take up to approximately six seconds to shut down while a read times
+out. Capture is released by the reader thread after its read completes.
+
+For the TC41 comparison test, keep the same transport and decoder settings used
+in the successful capture-only test:
+
+```bash
+export OPENCV_FFMPEG_CAPTURE_OPTIONS='rtsp_transport;tcp'
+export OPENCV_FFMPEG_THREADS=1
+python motion_detector.py --source rtsp --output-dir captures/tc41-background
+```
+
+Let this run for at least 60 seconds, walk through the view, and then press Ctrl+C.
+Inspect the saved JPEGs and note any H.264 warnings. The existing capture-only
+diagnostic remains available as `python test_rtsp_capture.py`.
 
 You can also replay a directory of JPEG/PNG images in filename order:
 

@@ -2,6 +2,7 @@
 
 import os
 from pathlib import Path
+import threading
 
 
 class PiCameraSource:
@@ -25,6 +26,7 @@ class PiCameraSource:
 
 
 class StreamSource:
+    """Continuously decode RTSP; keep only the newest unconsumed frame."""
     def __init__(self, cv2):
         self.cv2 = cv2
         url = os.environ.get("CAT_CAMERA_RTSP_URL", "")
@@ -41,15 +43,62 @@ class StreamSource:
         except BaseException:
             self.capture.release()
             raise
+        self.condition = threading.Condition()
+        self.stopping = threading.Event()
+        self.latest = None
+        self.error = None
+        self.worker = threading.Thread(target=self._capture_loop,
+                                       name="rtsp-capture", daemon=True)
+        try:
+            self.worker.start()
+        except BaseException:
+            self.capture.release()
+            raise
+
+    def _capture_loop(self):
+        try:
+            while not self.stopping.is_set():
+                ok, frame = self.capture.read()
+                if not ok or frame is None:
+                    raise RuntimeError("RTSP frame unavailable")
+                with self.condition:
+                    self.latest = frame
+                    self.condition.notify_all()
+        except Exception:
+            # Do not propagate backend messages that might contain credentials.
+            with self.condition:
+                self.error = "RTSP capture failed; check connection and restart the detector"
+                self.condition.notify_all()
+        finally:
+            # Only the reader releases the capture: never release during read().
+            self.capture.release()
+            with self.condition:
+                self.condition.notify_all()
 
     def read(self):
-        ok, frame = self.capture.read()
-        if not ok or frame is None:
-            raise RuntimeError("RTSP frame unavailable; check connection and restart the detector")
+        with self.condition:
+            ready = self.condition.wait_for(
+                lambda: self.latest is not None or self.error or self.stopping.is_set(),
+                timeout=6)
+            if self.stopping.is_set():
+                raise RuntimeError("RTSP capture is closed")
+            if self.error:
+                raise RuntimeError(self.error)
+            if not ready:
+                raise RuntimeError("Timed out waiting for an RTSP frame")
+            frame = self.latest
+            self.latest = None
         return self.cv2.resize(frame, (640, 360))
 
     def close(self):
-        self.capture.release()
+        self.stopping.set()
+        with self.condition:
+            self.latest = None
+            self.condition.notify_all()
+        # The FFmpeg read timeout is five seconds. Allow it to return safely.
+        self.worker.join(timeout=6)
+        if self.worker.is_alive():
+            raise RuntimeError("RTSP reader did not stop within its timeout")
 
 
 class ImageSource:
