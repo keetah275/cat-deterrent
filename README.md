@@ -1,5 +1,58 @@
 # Garden motion-detection prototype
 
+## Run continuously on the Pi
+
+`tmux` survives SSH disconnections but cannot restart a failed detector. The
+supplied systemd service starts at boot and restarts the detector ten seconds
+after it exits, including on an RTSP failure. It runs as `keets27` from
+`/home/keets27/cat-deterrent`, using `.venv` and `config-tc41-night.json`.
+Edit the unit if your username or project location differs. It uses this profile
+all day; it does not automatically switch between day and night settings.
+
+On the Pi, first stop any existing detector in tmux with Ctrl+C to avoid duplicate
+camera connections. Then, from the project directory:
+
+```bash
+python3 setup_camera_service_env.py
+sudo install -m 644 garden-detector.service /etc/systemd/system/garden-detector.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now garden-detector
+sudo systemctl status garden-detector --no-pager
+```
+
+The setup helper uses `CAT_CAMERA_RTSP_URL` if already exported, otherwise asks
+for it with a hidden prompt. It creates `camera-service.env` with mode 600 and
+refuses to overwrite an existing file. The file is ignored by Git. Camera
+credentials must be available to the service after reboot; exporting them only
+in an SSH session is insufficient. Backend errors may include credentials, so
+redact logs before sharing them.
+
+Check logs and the number of automatic restarts:
+
+```bash
+sudo journalctl -u garden-detector -n 80 --no-pager
+sudo systemctl show garden-detector -p ActiveState -p SubState -p NRestarts
+```
+
+Use `sudo journalctl -u garden-detector -f` to follow logs; Ctrl+C stops following,
+not the service. Captures use the directory specified in the selected config.
+
+```bash
+sudo systemctl stop garden-detector
+sudo systemctl start garden-detector
+sudo systemctl restart garden-detector
+```
+
+An explicit service stop is respected even with `Restart=always`. Restart after
+editing config or the credentials file. If the unit itself changes, reinstall it
+and run `sudo systemctl daemon-reload` before restarting. To stop it and disable
+boot startup, use `sudo systemctl disable --now garden-detector`.
+
+Restarting improves recovery, but does not guarantee continuous capture: network
+outages, startup/warmup, full storage, or overly restrictive motion settings can
+still cause missed animals. The service detects process exits, not every possible
+hang. Use the journal to find the actual failure instead of assuming SSH caused it.
+
 For the saved-image YOLO cat detector, see [cat detection setup and testing](CAT_DETECTION.md).
 
 Detection-only Python prototype for a Raspberry Pi 5 and Camera Module 3 NoIR Wide, using Picamera2 and OpenCV. It continuously captures 640 × 360 frames, converts them to greyscale, applies a Gaussian blur, and compares each frame with the previous one. Thresholding, dilation, and a minimum contour area filter identify moving regions.
@@ -82,6 +135,42 @@ python motion_detector.py --min-area 1000 --cooldown 15 --fps 8 --threshold 30 -
 | `--output-dir` | `captures` | Destination folder, created automatically. |
 
 Run `python motion_detector.py --help` for the available settings.
+
+### Night-time false triggers
+
+Two inspected TC41 night captures show bright, blurred foreground streaks,
+consistent with nearby insects or web strands reflecting infrared illumination.
+Their metadata has `detection_polygon: []`; the garden polygon was not enabled
+in those runs. This is an observation from samples, not a confirmed explanation
+for every trigger.
+
+Try the supplied night experiment with the existing garden polygon enabled:
+
+```bash
+source .venv/bin/activate
+export OPENCV_FFMPEG_CAPTURE_OPTIONS='rtsp_transport;tcp'
+export OPENCV_FFMPEG_THREADS=1
+python motion_detector.py --config config-tc41-night.json
+```
+
+`config-tc41-night.json` uses the same polygon as `config-tc41.json`, threshold
+30 instead of 25, and `motion_frames: 3`. Results go to
+`captures/tc41-night-test`. Ensure the polygon still matches the camera position;
+it is a small garden zone, not the full view.
+
+`motion_frames` (CLI: `--motion-frames`) requires motion in 1–100 consecutive
+processed frame comparisons. The default is 1, preserving existing behaviour.
+A quiet comparison resets the count. Three comparisons span approximately
+0.3 seconds of changes at 10 FPS, though actual timing varies with throughput.
+The cooldown still limits saves and settings are included in capture metadata.
+Motion need not be in the same location across these comparisons; this is a
+persistence filter, not animal tracking.
+
+This can reject brief flashes but may miss fast animals, and persistent insects,
+webs, rain, or changing illumination can still trigger it. Compare a full night
+and do a supervised walk through the zone to verify detection. Check the lens
+surroundings for webs and debris. The profile is selected manually; there is no
+automatic day/night switching. YOLO confirmation is not yet part of motion capture.
 
 ### Ignore motion around the frame edges
 

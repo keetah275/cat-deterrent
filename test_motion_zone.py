@@ -5,10 +5,23 @@ import unittest
 import cv2
 import numpy as np
 
-from motion_detector import detection_mask, moving_regions, prepare_frame
+from motion_detector import detection_mask, moving_regions, prepare_frame, MotionConfirmation
 
 
 class MotionZoneTests(unittest.TestCase):
+    def test_brief_flashes_do_not_confirm(self):
+        confirmation = MotionConfirmation(3)
+        positives = [True, False, True, True, False, True, True, True, True]
+        results = [confirmation.update([(1, 1, 20, 20)] if positive else [])
+                   for positive in positives]
+        self.assertEqual(results, [False, False, False, False, False,
+                                   False, False, True, True])
+
+    def test_default_confirmation_preserves_single_frame_detection(self):
+        confirmation = MotionConfirmation(1)
+        self.assertTrue(confirmation.update([(1, 1, 20, 20)]))
+        self.assertFalse(confirmation.update([]))
+
     def setUp(self):
         self.frame = np.zeros((360, 640, 3), dtype=np.uint8)
         self.mask = detection_mask(cv2, self.frame.shape, 60,

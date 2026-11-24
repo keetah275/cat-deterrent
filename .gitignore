@@ -10,4 +10,5 @@ garden-images/
 *_ncnn_model/
 decisions-results/
 .env
+camera-service.env
 garden-comparison/

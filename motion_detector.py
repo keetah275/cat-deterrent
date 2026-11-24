@@ -21,7 +21,7 @@ def parse_args():
         settings = json.loads(config_args.config.read_text())
     except (OSError, ValueError) as error:
         parser.error(f"cannot load config {config_args.config}: {error}")
-    allowed = {"min_area", "cooldown", "fps", "threshold", "warmup", "output_dir", "source", "input_path", "ignore_border", "detection_polygon"}
+    allowed = {"min_area", "cooldown", "fps", "threshold", "warmup", "output_dir", "source", "input_path", "ignore_border", "detection_polygon", "motion_frames"}
     if not isinstance(settings, dict) or settings.keys() - allowed:
         parser.error("config must be an object containing only: " + ", ".join(sorted(allowed)))
     for key, value in settings.items():
@@ -32,7 +32,7 @@ def parse_args():
                              and 0 <= p[0] < 640 and 0 <= p[1] < 360 for p in value))
         elif key in {"output_dir", "source", "input_path"}:
             valid = isinstance(value, str) and bool(value.strip())
-        elif key in {"threshold", "ignore_border"}:
+        elif key in {"threshold", "ignore_border", "motion_frames"}:
             valid = type(value) is int
         else:
             valid = type(value) in (int, float)
@@ -48,6 +48,8 @@ def parse_args():
                         help="greyscale difference threshold, 1–255 (default: 25)")
     parser.add_argument("--ignore-border", type=int, default=0,
                         help="ignore this many pixels on every edge, 0–179 (default: 0)")
+    parser.add_argument("--motion-frames", type=int, default=1,
+                        help="consecutive frames with motion before saving (default: 1)")
     parser.add_argument("--warmup", type=float, default=3,
                         help="camera settling time in seconds (default: 3)")
     parser.add_argument("--output-dir", type=Path, default=Path("captures"))
@@ -70,6 +72,8 @@ def parse_args():
         parser.error("fps must be 1–30 and threshold must be 1–255")
     if not 0 <= args.ignore_border < 180:
         parser.error("ignore-border must be between 0 and 179 pixels")
+    if not 1 <= args.motion_frames <= 100:
+        parser.error("motion-frames must be between 1 and 100")
     return args
 
 
@@ -127,6 +131,17 @@ def moving_regions(cv2, previous, current, threshold, min_area, zone_mask=None):
             if cv2.contourArea(contour) >= min_area]
 
 
+class MotionConfirmation:
+    """Require consecutive positive frames, resetting immediately on a quiet frame."""
+    def __init__(self, required):
+        self.required = required
+        self.count = 0
+
+    def update(self, boxes):
+        self.count = min(self.count + 1, self.required) if boxes else 0
+        return self.count >= self.required
+
+
 def main():
     args = parse_args()
     # Delayed imports allow --help to work even away from the Raspberry Pi.
@@ -141,6 +156,7 @@ def main():
         print(f"Camera warming up for {args.warmup:g}s...", flush=True)
         time.sleep(args.warmup)
         previous = None
+        confirmation = MotionConfirmation(args.motion_frames)
         zone_mask = None
         last_saved = float("-inf")
         interval = 1 / args.fps
@@ -160,7 +176,8 @@ def main():
             boxes = [(x + border, y + border, w, h) for x, y, w, h in boxes]
             previous = blurred
             now = time.monotonic()
-            if boxes and now - last_saved >= args.cooldown:
+            confirmed = confirmation.update(boxes)
+            if confirmed and now - last_saved >= args.cooldown:
                 timestamp = datetime.now().astimezone()
                 print(f"{timestamp.isoformat(timespec='seconds')} Motion detected "
                       f"({len(boxes)} region(s))", flush=True)
