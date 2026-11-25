@@ -1,5 +1,38 @@
 # Garden motion-detection prototype
 
+## Clean images and bursts for recognition
+
+Each motion trigger now saves the existing annotated 640 × 360 preview and a
+burst of unannotated JPEGs in `<output_dir>/raw/`. For the service's night profile,
+this is `captures/tc41-night-test/raw/`. Run YOLO on that directory, rather than
+the annotated previews:
+
+```bash
+source .venv-cat/bin/activate
+python cat_detector.py captures/tc41-night-test/raw
+```
+
+RTSP bursts retain the resolution received from the selected stream: selecting
+stream1 can supply more detail than stream2. No upscaling is used for clean
+images. Pi-camera capture remains configured to 640 × 360; native saved-image
+replay retains each input's dimensions. Motion processing, polygon coordinates,
+and minimum area still use 640 × 360 for every source.
+
+`burst_frames` defaults to 5 (allowed 1–20); `burst_interval` defaults to 0.2
+seconds (minimum spacing, nonnegative). Add them to a motion JSON config or use
+`--burst-frames 5 --burst-interval 0.2`. The first frame is saved at the trigger,
+followed by fresh frames even if motion stops. There is no pre-trigger buffer.
+Actual spacing depends on camera FPS, processing, and JPEG write speed. Only one
+burst is active at a time; cooldown applies between trigger starts. Early exit,
+end of replay input, or connection failure can leave a partial burst.
+
+Each raw JPEG has its own JSON containing native dimensions, effective settings,
+event identifier, and burst index. It contains no motion boxes. Raw JPEGs use
+quality 95; previews use 90. Burst frames consume more disk space and write time;
+there is no automatic retention policy. Stop the service before manual tests,
+and restart it after deploying this code using
+`sudo systemctl restart garden-detector`.
+
 ## Run continuously on the Pi
 
 `tmux` survives SSH disconnections but cannot restart a failed detector. The

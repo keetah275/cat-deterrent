@@ -75,7 +75,7 @@ class StreamSource:
             with self.condition:
                 self.condition.notify_all()
 
-    def read(self):
+    def read_native(self):
         with self.condition:
             ready = self.condition.wait_for(
                 lambda: self.latest is not None or self.error or self.stopping.is_set(),
@@ -88,7 +88,10 @@ class StreamSource:
                 raise RuntimeError("Timed out waiting for an RTSP frame")
             frame = self.latest
             self.latest = None
-        return self.cv2.resize(frame, (640, 360))
+        return frame
+
+    def read(self):
+        return self.cv2.resize(self.read_native(), (640, 360))
 
     def close(self):
         self.stopping.set()
@@ -114,14 +117,18 @@ class ImageSource:
             raise ValueError("Image directory contains no JPEG or PNG files")
         self.files = iter(files)
 
-    def read(self):
+    def read_native(self):
         path = next(self.files, None)
         if path is None:
             return None
         frame = self.cv2.imread(str(path))
         if frame is None:
             raise ValueError(f"Cannot decode image: {path.name}")
-        return self.cv2.resize(frame, (640, 360))
+        return frame
+
+    def read(self):
+        frame = self.read_native()
+        return None if frame is None else self.cv2.resize(frame, (640, 360))
 
     def close(self):
         pass

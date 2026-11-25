@@ -21,7 +21,7 @@ def parse_args():
         settings = json.loads(config_args.config.read_text())
     except (OSError, ValueError) as error:
         parser.error(f"cannot load config {config_args.config}: {error}")
-    allowed = {"min_area", "cooldown", "fps", "threshold", "warmup", "output_dir", "source", "input_path", "ignore_border", "detection_polygon", "motion_frames"}
+    allowed = {"min_area", "cooldown", "fps", "threshold", "warmup", "output_dir", "source", "input_path", "ignore_border", "detection_polygon", "motion_frames", "burst_frames", "burst_interval"}
     if not isinstance(settings, dict) or settings.keys() - allowed:
         parser.error("config must be an object containing only: " + ", ".join(sorted(allowed)))
     for key, value in settings.items():
@@ -32,7 +32,7 @@ def parse_args():
                              and 0 <= p[0] < 640 and 0 <= p[1] < 360 for p in value))
         elif key in {"output_dir", "source", "input_path"}:
             valid = isinstance(value, str) and bool(value.strip())
-        elif key in {"threshold", "ignore_border", "motion_frames"}:
+        elif key in {"threshold", "ignore_border", "motion_frames", "burst_frames"}:
             valid = type(value) is int
         else:
             valid = type(value) in (int, float)
@@ -50,6 +50,10 @@ def parse_args():
                         help="ignore this many pixels on every edge, 0–179 (default: 0)")
     parser.add_argument("--motion-frames", type=int, default=1,
                         help="consecutive frames with motion before saving (default: 1)")
+    parser.add_argument("--burst-frames", type=int, default=5,
+                        help="unannotated native frames per trigger, 1–20 (default: 5)")
+    parser.add_argument("--burst-interval", type=float, default=0.2,
+                        help="minimum seconds between burst frames (default: 0.2)")
     parser.add_argument("--warmup", type=float, default=3,
                         help="camera settling time in seconds (default: 3)")
     parser.add_argument("--output-dir", type=Path, default=Path("captures"))
@@ -64,7 +68,7 @@ def parse_args():
         parser.error("source must be picamera2, rtsp, or images")
     import math
     if not all(math.isfinite(value) for value in
-               (args.min_area, args.cooldown, args.fps, args.warmup)):
+               (args.min_area, args.cooldown, args.fps, args.warmup, args.burst_interval)):
         parser.error("numeric settings must be finite")
     if args.min_area <= 0 or args.cooldown < 0 or args.warmup < 0:
         parser.error("min-area must be positive; cooldown and warmup cannot be negative")
@@ -74,10 +78,12 @@ def parse_args():
         parser.error("ignore-border must be between 0 and 179 pixels")
     if not 1 <= args.motion_frames <= 100:
         parser.error("motion-frames must be between 1 and 100")
+    if not 1 <= args.burst_frames <= 20 or args.burst_interval < 0:
+        parser.error("burst-frames must be 1–20; burst-interval cannot be negative")
     return args
 
 
-def save_capture_metadata(filename, args, timestamp, boxes):
+def save_capture_metadata(filename, args, timestamp, boxes, extra=None):
     """Save effective settings, including CLI overrides, beside the JPEG."""
     metadata = {
         "timestamp": timestamp.isoformat(),
@@ -91,6 +97,8 @@ def save_capture_metadata(filename, args, timestamp, boxes):
         "bounding_boxes": [dict(zip(("x", "y", "width", "height"), box))
                            for box in boxes],
     }
+    if extra:
+        metadata.update(extra)
     filename.with_suffix(".json").write_text(json.dumps(metadata, indent=2) + "\n")
 
 
@@ -131,6 +139,23 @@ def moving_regions(cv2, previous, current, threshold, min_area, zone_mask=None):
             if cv2.contourArea(contour) >= min_area]
 
 
+def save_raw_frame(cv2, native, args, timestamp, event_id, index):
+    directory = args.output_dir / "raw"
+    directory.mkdir(parents=True, exist_ok=True)
+    filename = directory / f"{event_id}_burst_{index:02d}.jpg"
+    if not cv2.imwrite(str(filename), native, [cv2.IMWRITE_JPEG_QUALITY, 95]):
+        raise OSError(f"Could not save image: {filename}")
+    save_capture_metadata(filename, args, timestamp, [], {
+        "event_id": event_id, "burst_index": index,
+        "image_size": {"width": native.shape[1], "height": native.shape[0]},
+        "annotated": False,
+        "processing": {"resolution": [native.shape[1], native.shape[0]],
+                       "method": "unannotated_source_frame", "jpeg_quality": 95},
+        "note": "Native received frame; motion processing uses 640 x 360. No boxes drawn.",
+    })
+    print(f"Saved raw {filename}", flush=True)
+
+
 class MotionConfirmation:
     """Require consecutive positive frames, resetting immediately on a quiet frame."""
     def __init__(self, required):
@@ -156,6 +181,10 @@ def main():
         print(f"Camera warming up for {args.warmup:g}s...", flush=True)
         time.sleep(args.warmup)
         previous = None
+        burst_remaining = 0
+        burst_index = 0
+        next_burst = 0
+        event_id = None
         confirmation = MotionConfirmation(args.motion_frames)
         zone_mask = None
         last_saved = float("-inf")
@@ -163,10 +192,11 @@ def main():
         print("Watching for motion at 640 × 360. Press Ctrl+C to stop.", flush=True)
         while True:
             loop_start = time.monotonic()
-            frame = camera.read()
-            if frame is None:
+            native = camera.read_native() if hasattr(camera, "read_native") else camera.read()
+            if native is None:
                 print("End of image input.", flush=True)
                 break
+            frame = cv2.resize(native, (640, 360))
             border = args.ignore_border
             if zone_mask is None:
                 zone_mask = detection_mask(cv2, frame.shape, border, args.detection_polygon)
@@ -177,10 +207,14 @@ def main():
             previous = blurred
             now = time.monotonic()
             confirmed = confirmation.update(boxes)
-            if confirmed and now - last_saved >= args.cooldown:
+            if confirmed and not burst_remaining and now - last_saved >= args.cooldown:
                 timestamp = datetime.now().astimezone()
                 print(f"{timestamp.isoformat(timespec='seconds')} Motion detected "
                       f"({len(boxes)} region(s))", flush=True)
+                event_id = timestamp.strftime("motion_%Y%m%d_%H%M%S_%f")
+                burst_remaining = args.burst_frames
+                burst_index = 0
+                next_burst = now
                 for x, y, width, height in boxes:
                     cv2.rectangle(frame, (x, y), (x + width, y + height),
                                   (0, 255, 0), 2)
@@ -192,6 +226,11 @@ def main():
                 save_capture_metadata(filename, args, timestamp, boxes)
                 last_saved = time.monotonic()
                 print(f"Saved {filename}", flush=True)
+            if burst_remaining and time.monotonic() >= next_burst:
+                burst_index += 1
+                save_raw_frame(cv2, native, args, datetime.now().astimezone(), event_id, burst_index)
+                burst_remaining -= 1
+                next_burst = time.monotonic() + args.burst_interval
             # Continue updating the previous frame throughout the cooldown.
             time.sleep(max(0, interval - (time.monotonic() - loop_start)))
     except KeyboardInterrupt:
