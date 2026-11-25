@@ -33,5 +33,5 @@
   "threshold": 25,
   "warmup": 3,
   "output_dir": "captures/tc41-night-test",
-  "motion_frames": 1
+  "motion_frames": 5
 }

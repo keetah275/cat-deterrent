@@ -187,14 +187,15 @@ python motion_detector.py --config config-tc41-night.json
 ```
 
 `config-tc41-night.json` uses the same polygon as `config-tc41.json`, threshold
-30 instead of 25, and `motion_frames: 3`. Results go to
+25, and `motion_frames: 5`. Missing fast crossings is acceptable for this project;
+the aim is to detect cats lingering or moving slowly. Results go to
 `captures/tc41-night-test`. Ensure the polygon still matches the camera position;
 it is a small garden zone, not the full view.
 
 `motion_frames` (CLI: `--motion-frames`) requires motion in 1–100 consecutive
 processed frame comparisons. The default is 1, preserving existing behaviour.
-A quiet comparison resets the count. Three comparisons span approximately
-0.3 seconds of changes at 10 FPS, though actual timing varies with throughput.
+A quiet comparison resets the count. Five comparisons span approximately
+0.5 seconds of changes at 10 FPS, though actual timing varies with throughput.
 The cooldown still limits saves and settings are included in capture metadata.
 Motion need not be in the same location across these comparisons; this is a
 persistence filter, not animal tracking.

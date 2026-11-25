@@ -2,6 +2,12 @@
 
 ## Purpose
 
+The deterrent should target cats lingering or moving slowly, including stalking
+birds or preparing to toilet. Missing a fast crossing is acceptable. Detection
+may require sustained evidence to reject brief night-time streaks and allow time
+for eventual spray activation. Motion persistence is not a speed measurement;
+stationary cats still need periodic image-based animal detection in a later stage.
+
 Build a Raspberry Pi-based system to deter cats from using the garden as a toilet. The intended final system will detect a cat in the garden and trigger a pump to spray water as a deterrent.
 
 This document records the project context for future development and assistant sessions. It describes the intended plan, not features that are already implemented.
