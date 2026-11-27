@@ -68,6 +68,15 @@ class RetentionTests(unittest.TestCase):
             run_retention(self.root, {'no_spray_hours':24,'samples_per_hour':0}, self.root/'missing.db', True, self.now)
         self.assertEqual(sum(image.exists() for _,image in events), 2)
 
+    def test_clear_ignores_age_and_samples_but_preserves_positives(self):
+        _, negative = self.event(10, 1, age=0)
+        _, positive = self.event(10, 2, verdict=True, age=0)
+        count = run_retention(self.root, {'no_spray_hours':24,'samples_per_hour':10},
+                              self.db, True, self.now, clear_no_spray=True)
+        self.assertEqual(count, 1)
+        self.assertFalse(negative.exists())
+        self.assertTrue(positive.exists())
+
 
 if __name__ == '__main__':
     unittest.main()

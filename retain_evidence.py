@@ -14,7 +14,7 @@ import sqlite3
 from review_worker import atomic_json
 
 
-def plan_retention(root, policy, reviewed, now):
+def plan_retention(root, policy, reviewed, now, clear_no_spray=False):
     root = root.resolve()
     candidates = []
     protected = set(reviewed)
@@ -49,9 +49,9 @@ def plan_retention(root, policy, reviewed, now):
     for entries in buckets.values():
         # Stable sample selection, independent of file listing order.
         entries.sort(key=lambda entry: hashlib.sha256(entry[1]['event_id'].encode()).hexdigest())
-        sampled = {path for path, _, _ in entries[:policy['samples_per_hour']]}
+        sampled = set() if clear_no_spray else {path for path, _, _ in entries[:policy['samples_per_hour']]}
         for path, item, evaluated in entries:
-            if path in sampled or evaluated >= cutoff or item.get('evidence_retained') is False:
+            if path in sampled or (not clear_no_spray and evaluated >= cutoff) or item.get('evidence_retained') is False:
                 continue
             event = item['event_id']
             source = Path(item['source_directory'])
@@ -82,7 +82,7 @@ def plan_retention(root, policy, reviewed, now):
     return candidates
 
 
-def run_retention(root, policy, feedback_db, apply=False, now=None):
+def run_retention(root, policy, feedback_db, apply=False, now=None, clear_no_spray=False):
     if type(policy.get('no_spray_hours')) not in (int, float) or not 1 <= policy['no_spray_hours'] <= 87600:
         raise ValueError('no_spray_hours must be between 1 and 87600')
     if type(policy.get('samples_per_hour')) is not int or not 0 <= policy['samples_per_hour'] <= 100:
@@ -94,7 +94,7 @@ def run_retention(root, policy, feedback_db, apply=False, now=None):
         connection.execute('BEGIN IMMEDIATE')
         reviewed = {row[0] for row in connection.execute('SELECT DISTINCT event_id FROM feedback')}
         now = now or datetime.now(timezone.utc)
-        plan = plan_retention(root, policy, reviewed, now)
+        plan = plan_retention(root, policy, reviewed, now, clear_no_spray)
         count = 0
         for path, item, files in plan:
             existing = [p for p in files if p.is_file()]
@@ -120,9 +120,12 @@ def main():
     parser.add_argument('--config', type=Path, default=Path(__file__).with_name('retention_config.json'))
     parser.add_argument('--feedback-db', type=Path, default=Path('/var/lib/garden-dashboard/feedback.sqlite3'))
     parser.add_argument('--apply', action='store_true', help='delete eligible evidence; default previews only')
+    parser.add_argument('--clear-no-spray', action='store_true',
+                        help='one-off clear: ignore age and sampling; still protect positive and reviewed events')
     args = parser.parse_args()
     try:
-        run_retention(args.root.resolve(), json.loads(args.config.read_text()), args.feedback_db, args.apply)
+        run_retention(args.root.resolve(), json.loads(args.config.read_text()), args.feedback_db, args.apply,
+                      clear_no_spray=args.clear_no_spray)
     except (OSError, ValueError, KeyError, TypeError, sqlite3.Error) as error:
         parser.exit(1, f'Retention stopped: {error}\n')
 
