@@ -10,5 +10,6 @@ garden-images/
 *_ncnn_model/
 decisions-results/
 .env
+spray-review/
 camera-service.env
 garden-comparison/

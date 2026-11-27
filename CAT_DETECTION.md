@@ -1,5 +1,37 @@
 # Test cat detection on saved images
 
+## Review hypothetical spray decisions
+
+After running YOLO on a `raw/` capture directory at confidence 0.25, evaluate
+that results folder without running inference again:
+
+```bash
+python3 spray_decisions.py cat-results/run_20261127_140422_zppifcbs
+```
+
+This uses only the Python standard library, makes no API calls, and controls no
+hardware. Each run creates `spray-review/run_.../` containing `review.html`,
+`decisions.jsonl`, and `decisions.csv`. Open the HTML locally on the Pi to follow
+annotated/original image links. The CSV has blank review-verdict and notes columns
+for your assessment. JSONL includes the full detections, model settings, evidence
+paths, policy, and reason for each decision. Keep the original evidence and YOLO
+results in place; links are absolute paths on the machine running the command.
+
+`spray_policy.json` requires cat OR dog in at least two different frames, blocks
+any burst with a person detection, and expects all five burst reports. Furniture
+labels never count as evidence to spray, but their presence does not veto a real
+animal. Incomplete or duplicate bursts and inadequate report thresholds produce
+NO SPRAY. Multiple animals in one frame count as one positive frame. Scores are
+model confidence values, not validated probabilities. Confirmation across frames
+does not guarantee correct recognition or absence of people.
+
+The rule does not yet enforce animal location within the motion polygon, speed,
+lingering, tracking, or a cooldown between decisions. These are retrospective
+per-burst decisions, not a live spray schedule. This script is independent of
+`decisions_detector.py`, which is a separate OpenAI image experiment. The running
+capture service does not yet invoke YOLO or log spray decisions automatically;
+rerun this workflow on new results to review later captures.
+
 This detector processes one image or a directory, without requiring motion. It
 saves an annotated JPEG and a matching JSON report for **every readable image**,
 including those with no cat detected. It performs no camera or pump control.

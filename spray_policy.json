@@ -1,0 +1,6 @@
+{
+  "animal_confidence": 0.25,
+  "person_confidence": 0.25,
+  "min_animal_frames": 2,
+  "expected_frames": 5
+}

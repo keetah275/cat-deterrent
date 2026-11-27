@@ -1,5 +1,56 @@
 # Garden motion-detection prototype
 
+## Phone dashboard on your home network
+
+The read-only dashboard shows detector service status, recent motion previews and
+clean burst images, and the latest saved spray-decision review with browser image
+links. It refreshes every 30 seconds and supports paged captures and decision
+filters on a phone. It does not stream live video, start/stop capture, or control
+a pump. Running process status is not proof of a healthy camera feed; the latest
+capture timestamp is shown separately. Decisions remain retrospective: run YOLO
+and `spray_decisions.py` to create a new reviewed batch, then refresh the dashboard.
+
+On the Pi, after updating the project files:
+
+```bash
+sudo install -m 644 garden-dashboard.service /etc/systemd/system/garden-dashboard.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now garden-dashboard
+hostname -I
+```
+
+On a phone connected to the same home network, open `http://PI_IP:8080`, replacing
+`PI_IP` with the Pi's home-network IPv4 address from the final command. Reserve
+that address in your router if you want a stable bookmark. You can also try
+`http://rpi-5.local:8080` if local hostname discovery works on your phone.
+
+This is a separate service; installing it does not restart or change detection.
+It uses system Python and only the standard library, so no venv activation or
+extra package installation is needed. The unit assumes user `keets27` and checkout
+`/home/keets27/cat-deterrent`; adjust it if those differ.
+
+```bash
+sudo systemctl status garden-dashboard --no-pager
+sudo journalctl -u garden-dashboard -n 40 --no-pager
+sudo systemctl restart garden-dashboard
+```
+
+Unlike `python -m http.server`, this server does not expose project directories.
+Only explicit UI/API endpoints and JPEG/PNG images under `captures/`,
+`captures-tc41/`, and `cat-results/` can be served. Credentials, Git files,
+arbitrary files, and image symlinks escaping those directories are excluded.
+Keep it on a trusted home LAN: this initial version has no login or HTTPS, so
+other devices able to reach port 8080 can see garden images. Do not port-forward
+it to the internet. Stop any earlier project-wide `http.server` you launched.
+
+Capture enumeration is cached for 15 seconds; decision reviews show up to the
+last 500 events in the latest batch, not every historical batch. Original evidence
+files must still exist on the Pi. On very large capture archives, scans can become
+slow; this version uses files rather than a database. Manual local testing is
+also available with `python3 garden_dashboard.py --host 0.0.0.0 --port 8080` after
+stopping the dashboard service to free the port. Stop/disable it with
+`sudo systemctl disable --now garden-dashboard`.
+
 ## Clean images and bursts for recognition
 
 Each motion trigger now saves the existing annotated 640 × 360 preview and a
