@@ -1,0 +1,9 @@
+[Unit]
+Description=Prune old unreviewed NO SPRAY evidence
+After=garden-dashboard.service
+
+[Service]
+Type=oneshot
+User=keets27
+WorkingDirectory=/home/keets27/cat-deterrent
+ExecStart=/usr/bin/python3 /home/keets27/cat-deterrent/retain_evidence.py --apply

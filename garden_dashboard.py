@@ -189,6 +189,7 @@ class Dashboard:
                     records.append({"event_id": item["event_id"], "would_spray": item["would_spray"],
                                     "decision_id": decision_id, "feedback": feedback.get(decision_id), "review_run": run.name,
                                     "reason": item["reason"], "evidence": evidence,
+                                    "evidence_retained": item.get("evidence_retained", True),
                                     "evaluated_at": item.get("evaluated_at"), "policy": item.get("policy")})
                 except (ValueError, KeyError, TypeError):
                     continue

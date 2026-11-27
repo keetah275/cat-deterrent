@@ -1,5 +1,63 @@
 # Garden motion-detection prototype
 
+## Evidence retention
+
+Decision review displays six events per page, with Previous/Next controls and
+a matching-event count. Filters reset to the first page. Reviewed events disappear
+from Not reviewed after save, and empty final pages fall back to the previous page.
+Only the visible page creates image elements, reducing phone browser load.
+
+`retention_config.json` defaults to keeping all live evidence for 2 hours after
+analysis, then keeping one unreviewed NO SPRAY event per source/capture hour as an
+audit sample. Every WOULD SPRAY event and every event with feedback is protected.
+Incomplete/inconclusive bursts and unprocessed captures are not pruned. Manual
+batch evidence is not pruned; a positive manual verdict on an event also protects
+its live evidence. Review protection applies by event name across batches.
+
+Preview on the Pi after updating files:
+
+```bash
+python3 retain_evidence.py
+```
+
+This lists eligible events and file counts without deleting. For a manual cleanup,
+use `python3 retain_evidence.py --apply`. For automatic hourly cleanup:
+
+```bash
+sudo install -m 644 garden-retention.service garden-retention.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now garden-retention.timer
+sudo systemctl restart garden-dashboard
+```
+
+Cleanup removes eligible motion previews, raw burst JPEGs and sidecars, and live
+annotated JPEGs and report sidecars. Live decision JSON, its embedded detections,
+policy and evidence paths, completion markers, worker state, and feedback remain.
+The dashboard labels expired evidence; it is hidden from Not reviewed but remains
+in All. Feedback added after expiry cannot recover deleted images. Back up any
+important evidence first. A reviewed event is protected against future deletion,
+not against deletion already completed before the feedback was saved.
+
+The tool requires readable existing feedback storage at
+`/var/lib/garden-dashboard/feedback.sqlite3` and stops without deletion if it cannot
+read it. For manual dashboard storage, pass
+`--feedback-db dashboard-data/feedback.sqlite3`. It holds a database write lock
+during cleanup so committed reviews cannot race with deletion; feedback saves may
+briefly wait. It uses only local data; there is no API cost or retraining.
+
+Inspect scheduling and cleanup logs:
+
+```bash
+systemctl list-timers garden-retention.timer
+sudo journalctl -u garden-retention -n 40 --no-pager
+```
+
+Change `no_spray_hours` (1–87600) and `samples_per_hour` (0–100) in the config;
+the next cleanup uses the new values. Zero samples keeps none beyond the grace
+period. To stop automatic cleanup:
+`sudo systemctl disable --now garden-retention.timer`.
+This reduces stored evidence, not how often motion detection or YOLO runs.
+
 ## Automatic review of new capture bursts
 
 `garden-review` is a separate background service using `.venv-cat`. Capture

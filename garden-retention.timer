@@ -1,0 +1,11 @@
+[Unit]
+Description=Hourly garden evidence retention
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=120
+Unit=garden-retention.service
+
+[Install]
+WantedBy=timers.target
