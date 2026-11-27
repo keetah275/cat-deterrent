@@ -11,5 +11,6 @@ garden-images/
 decisions-results/
 .env
 spray-review/
+dashboard-data/
 camera-service.env
 garden-comparison/

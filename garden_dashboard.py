@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
-"""Read-only garden dashboard for a trusted home LAN. No directory serving."""
+"""Garden monitoring and decision feedback for a trusted home LAN."""
 
 import argparse
 from collections import deque
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import csv
+import hashlib
+import io
 from pathlib import Path
+import secrets
+import sqlite3
+import sys
 import subprocess
 import threading
 import time
@@ -14,12 +20,76 @@ from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 
 class Dashboard:
-    def __init__(self, root):
+    def __init__(self, root, data_dir=None):
         self.root = root.resolve()
         self.image_roots = [self.root / name for name in ("captures", "captures-tc41", "cat-results")]
         self.lock = threading.Lock()
         self.cached = None
         self.cached_at = 0
+        self.data_dir = Path(data_dir) if data_dir else self.root / "dashboard-data"
+        self.feedback_token = secrets.token_urlsafe(32)
+
+    def database(self):
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+        connection = sqlite3.connect(self.data_dir / "feedback.sqlite3", timeout=10)
+        connection.row_factory = sqlite3.Row
+        connection.execute("""CREATE TABLE IF NOT EXISTS feedback (
+            id INTEGER PRIMARY KEY, decision_id TEXT NOT NULL, event_id TEXT NOT NULL,
+            run TEXT NOT NULL, would_spray INTEGER NOT NULL, verdict TEXT NOT NULL,
+            note TEXT NOT NULL, saved_at TEXT NOT NULL)""")
+        connection.execute("CREATE INDEX IF NOT EXISTS feedback_decision ON feedback(decision_id, id)")
+        return connection
+
+    def check_feedback_storage(self):
+        """Check real write access, including systemd filesystem restrictions."""
+        connection = self.database()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute("INSERT INTO feedback (decision_id,event_id,run,would_spray,verdict,note,saved_at) VALUES (?,?,?,?,?,?,?)",
+                               ("storage-check", "", "", 0, "agree", "", ""))
+            connection.rollback()
+        finally:
+            connection.close()
+
+    def feedback_latest(self):
+        if not (self.data_dir / "feedback.sqlite3").exists():
+            return {}
+        connection = self.database()
+        try:
+            rows = connection.execute("SELECT * FROM feedback WHERE id IN (SELECT MAX(id) FROM feedback GROUP BY decision_id)")
+            return {row["decision_id"]: dict(row) for row in rows}
+        finally:
+            connection.close()
+
+    def save_feedback(self, payload):
+        verdict, note = payload.get("verdict"), payload.get("note", "")
+        if verdict not in {"agree", "disagree"} or not isinstance(note, str) or len(note) > 2000:
+            raise ValueError("Choose agree or disagree; notes are limited to 2000 characters")
+        batch = self.decisions()
+        decision = next((d for d in batch["items"] if d["decision_id"] == payload.get("decision_id")), None)
+        if decision is None:
+            raise ValueError("Decision is no longer in the current batch; refresh first")
+        saved_at = datetime.now().astimezone().isoformat()
+        connection = self.database()
+        try:
+            with connection:
+                connection.execute("INSERT INTO feedback (decision_id,event_id,run,would_spray,verdict,note,saved_at) VALUES (?,?,?,?,?,?,?)",
+                    (decision["decision_id"], decision["event_id"], batch["run"],
+                     int(decision["would_spray"]), verdict, note, saved_at))
+        finally:
+            connection.close()
+        return {"verdict": verdict, "note": note, "saved_at": saved_at}
+
+    def feedback_csv(self):
+        output = io.StringIO(newline="")
+        writer = csv.writer(output)
+        keys = ["decision_id", "event_id", "run", "would_spray", "verdict", "note", "saved_at"]
+        writer.writerow(keys)
+        for feedback in self.feedback_latest().values():
+            values = [feedback[key] for key in keys]
+            # Keep notes as text when opened in spreadsheet software.
+            writer.writerow(["'" + v if isinstance(v, str) and v.startswith(("=", "+", "-", "@", "\t", "\r")) else v for v in values])
+        return output.getvalue().encode("utf-8")
 
     def image_path(self, relative):
         path = (self.root / relative).resolve()
@@ -77,6 +147,7 @@ class Dashboard:
             return {"ActiveState": "unknown"}
 
     def decisions(self):
+        feedback = self.feedback_latest()
         root = self.root / "spray-review"
         runs = sorted((p for p in root.glob("run_*") if p.is_dir() and not p.is_symlink()), reverse=True)
         for run in runs:
@@ -98,7 +169,10 @@ class Dashboard:
                                          "annotated": annotated,
                                          "detections": [{"label": d["label"], "confidence": d["confidence"]}
                                                         for d in report.get("detections", [])]})
+                    identity = json.dumps([run.name, item["event_id"], item.get("source_directory", "")])
+                    decision_id = hashlib.sha256(identity.encode()).hexdigest()
                     records.append({"event_id": item["event_id"], "would_spray": item["would_spray"],
+                                    "decision_id": decision_id, "feedback": feedback.get(decision_id),
                                     "reason": item["reason"], "evidence": evidence,
                                     "evaluated_at": item.get("evaluated_at"), "policy": item.get("policy")})
                 except (ValueError, KeyError, TypeError):
@@ -144,7 +218,9 @@ def handler_for(app):
                     data = {"items": items[offset:offset+24], "total": len(items)}
                     self.send_content(json.dumps(data).encode(), "application/json")
                 elif parsed.path == "/api/decisions":
-                    self.send_content(json.dumps(app.decisions()).encode(), "application/json")
+                    self.send_content(json.dumps({**app.decisions(), "feedback_token": app.feedback_token}).encode(), "application/json")
+                elif parsed.path == "/api/feedback.csv":
+                    self.send_content(app.feedback_csv(), "text/csv; charset=utf-8")
                 elif parsed.path == "/image":
                     path = app.image_path(query.get("path", [""])[0])
                     self.send_content(path.read_bytes(), "image/png" if path.suffix.lower() == ".png" else "image/jpeg")
@@ -152,6 +228,39 @@ def handler_for(app):
                     self.send_error(404)
             except (OSError, ValueError, KeyError):
                 self.send_error(404, "Not available")
+            except sqlite3.Error:
+                self.send_error(503, "Feedback storage unavailable")
+
+        def do_POST(self):
+            if self.path != "/api/feedback":
+                self.send_error(404)
+                return
+            if not secrets.compare_digest(self.headers.get("X-Feedback-Token", ""), app.feedback_token):
+                self.feedback_error(403, "The dashboard restarted. Refresh the page before submitting feedback.")
+                return
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                if not 0 < length <= 16384 or self.headers.get_content_type() != "application/json":
+                    raise ValueError("Invalid feedback request")
+                payload = json.loads(self.rfile.read(length))
+                if not isinstance(payload, dict):
+                    raise ValueError("Invalid feedback request")
+                result = app.save_feedback(payload)
+                self.send_content(json.dumps(result).encode(), "application/json")
+            except (ValueError, TypeError, KeyError):
+                self.feedback_error(400, "Invalid feedback or an outdated decision. Refresh and try again.")
+            except (OSError, sqlite3.Error):
+                print("Feedback save failed: storage is unavailable or not writable. Check the installed dashboard unit's StateDirectory and --data-dir.", file=sys.stderr, flush=True)
+                self.feedback_error(503, "Feedback was not saved: storage is unavailable or read-only. Reinstall the updated garden-dashboard.service and restart it.")
+
+        def feedback_error(self, status, message):
+            body = json.dumps({"error": message}).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
 
     return Handler
 
@@ -161,8 +270,14 @@ def main():
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8080)
     parser.add_argument("--root", type=Path, default=Path(__file__).parent)
+    parser.add_argument("--data-dir", type=Path, help="persistent feedback storage directory")
     args = parser.parse_args()
-    server = ThreadingHTTPServer((args.host, args.port), handler_for(Dashboard(args.root)))
+    app = Dashboard(args.root, args.data_dir)
+    try:
+        app.check_feedback_storage()
+    except (OSError, sqlite3.Error):
+        parser.exit(1, "Dashboard feedback storage is not writable. Reinstall the updated garden-dashboard.service (StateDirectory=garden-dashboard and --data-dir /var/lib/garden-dashboard), or select a writable --data-dir for manual use.\n")
+    server = ThreadingHTTPServer((args.host, args.port), handler_for(app))
     print(f"Garden dashboard listening on {args.host}:{args.port}", flush=True)
     try:
         server.serve_forever()

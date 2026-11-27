@@ -2,13 +2,43 @@
 
 ## Phone dashboard on your home network
 
-The read-only dashboard shows detector service status, recent motion previews and
+The dashboard shows detector service status, recent motion previews and
 clean burst images, and the latest saved spray-decision review with browser image
 links. It refreshes every 30 seconds and supports paged captures and decision
 filters on a phone. It does not stream live video, start/stop capture, or control
 a pump. Running process status is not proof of a healthy camera feed; the latest
 capture timestamp is shown separately. Decisions remain retrospective: run YOLO
 and `spray_decisions.py` to create a new reviewed batch, then refresh the dashboard.
+
+### Decision feedback
+
+Each decision has **Agree with decision** and **Disagree with decision** buttons
+and an optional note. Review the images, enter any note, then click a verdict to
+save. Click a verdict again after editing a note. A saved message confirms the
+write; failed writes are shown as errors. You can change your mind later. Filters
+show unreviewed or disagreed decisions, and **Download feedback CSV** exports the
+latest vote for each reviewed decision. All revisions are retained in SQLite.
+
+Feedback is stored on the Pi, shared across your home-network devices, and
+survives service restarts. It applies to that specific analysed batch, event, and
+policy, not every future evaluation of the same images. It does not retrain YOLO,
+change thresholds, or control spraying. There is no per-person login: everyone
+with dashboard access can submit feedback.
+
+The service uses `/var/lib/garden-dashboard/feedback.sqlite3` for storage,
+created with systemd `StateDirectory`. Manual runs default to
+`dashboard-data/feedback.sqlite3` or use `--data-dir` to select a directory.
+Back up this database separately from captures. To upgrade an existing dashboard,
+reinstall the unit so its writable state directory is configured:
+
+```bash
+sudo install -m 644 garden-dashboard.service /etc/systemd/system/garden-dashboard.service
+sudo systemctl daemon-reload
+sudo systemctl restart garden-dashboard
+```
+
+Then refresh the phone browser. Feedback writes require a dashboard-issued token
+to prevent unrelated websites submitting votes; this is not a login mechanism.
 
 On the Pi, after updating the project files:
 

@@ -1,5 +1,6 @@
 import io
 import json
+import sqlite3
 from pathlib import Path
 import tempfile
 import unittest
@@ -34,8 +35,13 @@ class DashboardTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
-    def request(self, target):
-        socket = Socket(f'GET {target} HTTP/1.0\r\n\r\n'.encode())
+    def request(self, target, payload=None, token=None):
+        body = json.dumps(payload).encode() if payload is not None else b''
+        method = 'POST' if payload is not None else 'GET'
+        headers = f'Content-Type: application/json\r\nContent-Length: {len(body)}\r\n'
+        if token:
+            headers += f'X-Feedback-Token: {token}\r\n'
+        socket = Socket(f'{method} {target} HTTP/1.0\r\n{headers}\r\n'.encode()+body)
         handler_for(self.app)(socket, ('127.0.0.1', 123), object())
         return socket.output.getvalue()
 
@@ -78,9 +84,61 @@ class DashboardTests(unittest.TestCase):
         self.assertTrue(evidence['annotated'].startswith('/image?path='))
         self.assertTrue(evidence['original'].startswith('/image?path='))
 
+        decision_id = data['items'][0]['decision_id']
+        payload = {'decision_id': decision_id, 'verdict': 'agree', 'note': 'A real cat'}
+        self.assertIn(b'403', self.request('/api/feedback', payload))
+        self.assertIn(b'200 OK', self.request('/api/feedback', payload, self.app.feedback_token))
+        # A new application instance still sees the saved vote.
+        restarted = Dashboard(self.root)
+        self.assertEqual(restarted.decisions()['items'][0]['feedback']['verdict'], 'agree')
+        payload.update(verdict='disagree', note='=example note')
+        self.assertIn(b'200 OK', self.request('/api/feedback', payload, self.app.feedback_token))
+        self.assertEqual(restarted.decisions()['items'][0]['feedback']['note'], '=example note')
+        connection = self.app.database()
+        try:
+            self.assertEqual(connection.execute('SELECT COUNT(*) FROM feedback').fetchone()[0], 2)
+        finally:
+            connection.close()
+        self.assertIn(b"'=example note", self.request('/api/feedback.csv'))
+        self.assertIn(b'404', self.request('/image?path=dashboard-data/feedback.sqlite3'))
+        payload['verdict'] = 'spray_now'
+        self.assertIn(b'400', self.request('/api/feedback', payload, self.app.feedback_token))
+        payload.update(verdict='agree', decision_id='not-a-real-decision')
+        self.assertIn(b'400', self.request('/api/feedback', payload, self.app.feedback_token))
+
     def test_unknown_service_is_not_reported_as_running(self):
         with patch('garden_dashboard.subprocess.run', side_effect=OSError):
             self.assertEqual(self.app.service_status()['ActiveState'], 'unknown')
+
+    def test_feedback_note_only_applies_to_selected_decision(self):
+        run = self.root / 'spray-review' / 'run_test'
+        run.mkdir(parents=True)
+        entries = [{'event_id': f'motion_{i}', 'would_spray': False,
+                    'reason': 'no_animal', 'evidence': []} for i in range(3)]
+        (run / 'decisions.jsonl').write_text(''.join(json.dumps(e)+'\n' for e in entries))
+        decisions = self.app.decisions()['items']
+        selected = decisions[1]['decision_id']
+        self.app.save_feedback({'decision_id': selected, 'verdict': 'disagree', 'note': 'Cat beside table'})
+        for item in Dashboard(self.root).decisions()['items']:
+            if item['decision_id'] == selected:
+                self.assertEqual(item['feedback']['note'], 'Cat beside table')
+            else:
+                self.assertIsNone(item['feedback'])
+
+    def test_storage_preflight_rolls_back_and_detects_read_only_database(self):
+        self.app.check_feedback_storage()
+        self.assertEqual(self.app.feedback_latest(), {})
+        with patch.object(self.app, 'database', side_effect=sqlite3.OperationalError('readonly')):
+            with self.assertRaises(sqlite3.OperationalError):
+                self.app.check_feedback_storage()
+
+    def test_failed_save_returns_actionable_error_without_success(self):
+        with patch.object(self.app, 'save_feedback', side_effect=sqlite3.OperationalError('readonly')):
+            response = self.request('/api/feedback', {'decision_id':'test','verdict':'agree'}, self.app.feedback_token)
+        self.assertIn(b'503', response)
+        body = json.loads(response.split(b'\r\n\r\n', 1)[1])
+        self.assertIn('read-only', body['error'])
+        self.assertNotIn('saved_at', body)
 
 
 if __name__ == '__main__':
