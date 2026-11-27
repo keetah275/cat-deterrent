@@ -27,11 +27,11 @@
       299
     ]
   ],
-  "min_area": 600,
+  "min_area": 200,
   "cooldown": 10,
   "fps": 10,
   "threshold": 25,
   "warmup": 3,
   "output_dir": "captures/tc41-night-test",
-  "motion_frames": 5
+  "motion_frames": 2
 }
