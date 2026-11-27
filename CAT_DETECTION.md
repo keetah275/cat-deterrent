@@ -26,11 +26,11 @@ model confidence values, not validated probabilities. Confirmation across frames
 does not guarantee correct recognition or absence of people.
 
 The rule does not yet enforce animal location within the motion polygon, speed,
-lingering, tracking, or a cooldown between decisions. These are retrospective
-per-burst decisions, not a live spray schedule. This script is independent of
-`decisions_detector.py`, which is a separate OpenAI image experiment. The running
-capture service does not yet invoke YOLO or log spray decisions automatically;
-rerun this workflow on new results to review later captures.
+lingering, tracking, or a cooldown between decisions. These are logging-only
+per-burst decisions, not a hardware spray schedule. This script is independent of
+`decisions_detector.py`, which is a separate OpenAI image experiment. For automatic review of new completed captures, install the separate
+`garden-review` worker described in the README. The manual workflow remains
+available for historical images and model comparisons.
 
 This detector processes one image or a directory, without requiring motion. It
 saves an annotated JPEG and a matching JSON report for **every readable image**,

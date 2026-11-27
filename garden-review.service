@@ -1,0 +1,19 @@
+[Unit]
+Description=Garden per-burst YOLO review worker (logging only)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+User=keets27
+WorkingDirectory=/home/keets27/cat-deterrent
+ExecStart=/home/keets27/cat-deterrent/.venv-cat/bin/python -u /home/keets27/cat-deterrent/review_worker.py --capture-config /home/keets27/cat-deterrent/config-tc41-night.json
+Environment=PYTHONUNBUFFERED=1
+Environment=OMP_NUM_THREADS=2
+Restart=on-failure
+RestartSec=10
+Nice=10
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

@@ -74,7 +74,7 @@ class Dashboard:
         try:
             with connection:
                 connection.execute("INSERT INTO feedback (decision_id,event_id,run,would_spray,verdict,note,saved_at) VALUES (?,?,?,?,?,?,?)",
-                    (decision["decision_id"], decision["event_id"], batch["run"],
+                    (decision["decision_id"], decision["event_id"], decision.get("review_run", batch["run"]),
                      int(decision["would_spray"]), verdict, note, saved_at))
         finally:
             connection.close()
@@ -134,10 +134,10 @@ class Dashboard:
             self.cached, self.cached_at = items, time.monotonic()
             return items
 
-    def service_status(self):
+    def service_status(self, unit="garden-detector"):
         try:
             result = subprocess.run([
-                "systemctl", "show", "garden-detector", "--no-pager",
+                "systemctl", "show", unit, "--no-pager",
                 "-p", "ActiveState", "-p", "SubState", "-p", "NRestarts",
                 "-p", "ActiveEnterTimestamp"], capture_output=True, text=True, timeout=3)
             if result.returncode:
@@ -150,13 +150,28 @@ class Dashboard:
         feedback = self.feedback_latest()
         root = self.root / "spray-review"
         runs = sorted((p for p in root.glob("run_*") if p.is_dir() and not p.is_symlink()), reverse=True)
-        for run in runs:
+        records = []
+        sources = []
+        for run in [root / "live"] + runs[:1]:
             log = run / "decisions.jsonl"
-            if not log.is_file() or log.is_symlink():
-                continue
-            records = []
-            with log.open() as handle:
-                lines = deque(handle, maxlen=500)
+            if run.name == "live":
+                paths = sorted(run.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)[:500]
+                lines = []
+                for path in paths:
+                    if path.is_symlink():
+                        continue
+                    try:
+                        lines.append(path.read_text())
+                    except OSError:
+                        continue
+                if not lines:
+                    continue
+            else:
+                if not log.is_file() or log.is_symlink():
+                    continue
+                with log.open() as handle:
+                    lines = deque(handle, maxlen=500)
+            sources.append(run.name)
             for line in lines:
                 try:
                     item = json.loads(line)
@@ -172,13 +187,13 @@ class Dashboard:
                     identity = json.dumps([run.name, item["event_id"], item.get("source_directory", "")])
                     decision_id = hashlib.sha256(identity.encode()).hexdigest()
                     records.append({"event_id": item["event_id"], "would_spray": item["would_spray"],
-                                    "decision_id": decision_id, "feedback": feedback.get(decision_id),
+                                    "decision_id": decision_id, "feedback": feedback.get(decision_id), "review_run": run.name,
                                     "reason": item["reason"], "evidence": evidence,
                                     "evaluated_at": item.get("evaluated_at"), "policy": item.get("policy")})
                 except (ValueError, KeyError, TypeError):
                     continue
-            return {"run": run.name, "items": sorted(records, key=lambda r: r["event_id"], reverse=True)}
-        return {"run": None, "items": []}
+        return {"run": " + ".join(sources) or None,
+                "items": sorted(records, key=lambda r: r["event_id"], reverse=True)}
 
 
 def handler_for(app):
@@ -207,7 +222,7 @@ def handler_for(app):
                     self.send_content((Path(__file__).parent / "dashboard" / name).read_bytes(), mime)
                 elif parsed.path == "/api/status":
                     items = app.captures()
-                    data = {"service": app.service_status(), "capture_count": len(items),
+                    data = {"service": app.service_status(), "review_service": app.service_status("garden-review"), "capture_count": len(items),
                             "latest_capture": items[0] if items else None,
                             "server_time": datetime.now().astimezone().isoformat()}
                     self.send_content(json.dumps(data).encode(), "application/json")

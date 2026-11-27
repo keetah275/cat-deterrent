@@ -1,5 +1,63 @@
 # Garden motion-detection prototype
 
+## Automatic review of new capture bursts
+
+`garden-review` is a separate background service using `.venv-cat`. Capture
+continues independently. After writing a whole burst, capture atomically creates
+`raw/motion_....complete.json`. The worker discovers these markers, queues them in
+`.review-worker/queue.sqlite3`, and evaluates each burst with YOLO and
+`spray_policy.json`. It publishes logging-only decisions to `spray-review/live/`
+and annotated evidence to `cat-results/live/`. No pump control is included.
+
+After updating the project on the Pi:
+
+```bash
+sudo install -m 644 garden-review.service /etc/systemd/system/garden-review.service
+sudo systemctl daemon-reload
+sudo systemctl restart garden-detector
+sudo systemctl enable --now garden-review
+sudo systemctl restart garden-dashboard
+sudo systemctl status garden-review --no-pager
+```
+
+The existing YOLO environment and downloaded weights must be installed. The worker
+uses `cat_config.json` for model and inference size, and the lower of the animal
+and person policy thresholds as its inference confidence. Complete bursts are
+reviewed whether or not they contain an animal. A person vetoes spraying; two
+cat/dog-positive frames qualify under the default five-frame policy. Errors retry
+with backoff up to five minutes and never publish a positive decision on failure.
+Inference runs sequentially with one model loaded at a time; latency depends on Pi
+load and queue length. Dashboard refresh adds up to 30 seconds of display delay.
+
+```bash
+sudo journalctl -u garden-review -f
+```
+
+Walk through the zone, wait for a burst to finish, and look for `Reviewed burst`
+in the worker log. Refresh Decision review on your phone. Your movement should
+normally yield NO SPRAY with a person reason; inspect the evidence to confirm.
+The dashboard combines live decisions with the latest manual batch and preserves
+feedback IDs as additional live events arrive. It shows up to 500 live events plus
+up to 500 events from the latest manual batch.
+
+Only bursts with completion markers are queued, so old captures are not silently
+backfilled and partially written bursts from an interrupted capture are ignored.
+Markers already created by this version while the worker was stopped are picked
+up on restart. Queue state and atomic decision files prevent duplicate publication
+across crashes. A crashed inference may rerun before its decision is published.
+Do not delete `.review-worker/`, live results, or pending source images while the
+worker is using them. Stop the worker before capture cleanup. Existing cleanup
+timeframe commands do not remove completion markers; remove the matching markers
+only if deliberately abandoning their review. Do not rerun a worker manually while
+the service is running; an exclusive lock prevents simultaneous workers.
+
+Policy/model settings are snapshotted when a burst is discovered. Editing settings
+affects newly queued bursts, not earlier queued jobs or past decisions. If you change
+`burst_frames`, also change policy `expected_frames`; a mismatch yields NO SPRAY.
+Changing capture output location requires restarting the worker with the same
+capture config. To stop automatic review: `sudo systemctl stop garden-review`.
+Capture and the dashboard continue running.
+
 ## Phone dashboard on your home network
 
 The dashboard shows detector service status, recent motion previews and
@@ -7,8 +65,8 @@ clean burst images, and the latest saved spray-decision review with browser imag
 links. It refreshes every 30 seconds and supports paged captures and decision
 filters on a phone. It does not stream live video, start/stop capture, or control
 a pump. Running process status is not proof of a healthy camera feed; the latest
-capture timestamp is shown separately. Decisions remain retrospective: run YOLO
-and `spray_decisions.py` to create a new reviewed batch, then refresh the dashboard.
+capture timestamp is shown separately. The review worker publishes new decisions automatically when installed. Manual
+YOLO and `spray_decisions.py` runs can still add historical comparison batches.
 
 ### Decision feedback
 
@@ -73,8 +131,7 @@ Keep it on a trusted home LAN: this initial version has no login or HTTPS, so
 other devices able to reach port 8080 can see garden images. Do not port-forward
 it to the internet. Stop any earlier project-wide `http.server` you launched.
 
-Capture enumeration is cached for 15 seconds; decision reviews show up to the
-last 500 events in the latest batch, not every historical batch. Original evidence
+Capture enumeration is cached for 15 seconds; decision reviews show up to 500 live events plus 500 from the latest manual batch. Original evidence
 files must still exist on the Pi. On very large capture archives, scans can become
 slow; this version uses files rather than a database. Manual local testing is
 also available with `python3 garden_dashboard.py --host 0.0.0.0 --port 8080` after
@@ -285,7 +342,7 @@ This can reject brief flashes but may miss fast animals, and persistent insects,
 webs, rain, or changing illumination can still trigger it. Compare a full night
 and do a supervised walk through the zone to verify detection. Check the lens
 surroundings for webs and debris. The profile is selected manually; there is no
-automatic day/night switching. YOLO confirmation is not yet part of motion capture.
+automatic day/night switching. YOLO confirmation runs separately after capture when garden-review is installed.
 
 ### Ignore motion around the frame edges
 

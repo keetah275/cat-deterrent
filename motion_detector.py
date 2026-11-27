@@ -230,6 +230,13 @@ def main():
                 burst_index += 1
                 save_raw_frame(cv2, native, args, datetime.now().astimezone(), event_id, burst_index)
                 burst_remaining -= 1
+                if not burst_remaining:
+                    # Publish only after every JPEG and sidecar has finished writing.
+                    manifest = args.output_dir / "raw" / f"{event_id}.complete.json"
+                    temporary = manifest.with_suffix(".json.tmp")
+                    temporary.write_text(json.dumps({"event_id": event_id, "frames": [
+                        f"{event_id}_burst_{i:02d}.jpg" for i in range(1, burst_index + 1)]}) + "\n")
+                    temporary.replace(manifest)
                 next_burst = time.monotonic() + args.burst_interval
             # Continue updating the previous frame throughout the cooldown.
             time.sleep(max(0, interval - (time.monotonic() - loop_start)))
